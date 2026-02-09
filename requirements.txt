@@ -1,0 +1,8 @@
+librosa
+numpy
+opencv-python
+moviepy
+imageio-ffmpeg
+soundfile
+yt-dlp
+requests
