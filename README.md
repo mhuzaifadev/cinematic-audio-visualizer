@@ -1,4 +1,4 @@
-# 🏎️ F1 Cinematic Audio Visualizer 🔥
+# Cinematic Audio Visualizer
 
 Generate stunning 1920×1080 cinematic videos where music energy drives speed, motion, and chaos.
 
@@ -34,35 +34,35 @@ pip install -r requirements.txt
 
 ```bash
 # Local audio file
-python f1_visualizer.py your_audio_file.mp3
+python cinematic_visualizer.py your_audio_file.mp3
 
 # YouTube URL (extracts highest quality audio)
-python f1_visualizer.py "https://www.youtube.com/watch?v=VIDEO_ID"
+python cinematic_visualizer.py "https://www.youtube.com/watch?v=VIDEO_ID"
 
 # Direct audio URL
-python f1_visualizer.py "https://example.com/audio.mp3"
+python cinematic_visualizer.py "https://example.com/audio.mp3"
 ```
 
 ### Specify Output Path
 
 ```bash
-python f1_visualizer.py your_audio_file.wav -o output_video.mp4
+python cinematic_visualizer.py your_audio_file.wav -o output_video.mp4
 ```
 
 ### Examples
 
 ```bash
 # Process a local WAV file
-python f1_visualizer.py lose_my_mind.wav
+python cinematic_visualizer.py lose_my_mind.wav
 
 # Process a local MP3 file with custom output
-python f1_visualizer.py track.mp3 -o cinematic_output.mp4
+python cinematic_visualizer.py track.mp3 -o cinematic_output.mp4
 
 # Download and process from YouTube (highest quality audio)
-python f1_visualizer.py "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+python cinematic_visualizer.py "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
 # Process audio from direct URL
-python f1_visualizer.py "https://example.com/music/track.mp3"
+python cinematic_visualizer.py "https://example.com/music/track.mp3"
 ```
 
 ## 📤 Output
@@ -120,13 +120,13 @@ python f1_visualizer.py "https://example.com/music/track.mp3"
 pip install -r requirements.txt
 
 # 2. Run visualizer (local file)
-python f1_visualizer.py your_track.mp3
+python cinematic_visualizer.py your_track.mp3
 
 # Or use YouTube URL
-python f1_visualizer.py "https://www.youtube.com/watch?v=VIDEO_ID"
+python cinematic_visualizer.py "https://www.youtube.com/watch?v=VIDEO_ID"
 
 # 3. Enjoy your cinematic video!
-# Output: your_track_f1_visualizer.mp4
+# Output: your_track_cinematic_visualizer.mp4
 ```
 
 ## 🌐 URL Support
@@ -144,4 +144,4 @@ All temporary files are automatically cleaned up after processing.
 
 ---
 
-**Built for pure cinematic energy. No text. No cringe. Just speed. 🏎️🔥**
+**Built for pure cinematic energy. No text. No cringe. Just visuals.**

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-F1 Cinematic Audio Visualizer 🏎️🔥
+Cinematic Audio Visualizer
 
 Generates a 1920×1080 cinematic video where music energy drives speed, motion, and chaos.
 Features:
@@ -201,13 +201,13 @@ def prepare_audio_input(input_path, temp_dir=None):
         if is_youtube_url(input_path_str):
             print("Detected YouTube URL")
             if temp_dir is None:
-                temp_dir = tempfile.mkdtemp(prefix="f1_visualizer_")
+                temp_dir = tempfile.mkdtemp(prefix="cinematic_visualizer_")
             audio_path = download_youtube_audio(input_path_str, temp_dir)
             return Path(audio_path), True, temp_dir
         else:
             print("Detected direct audio URL")
             if temp_dir is None:
-                temp_dir = tempfile.mkdtemp(prefix="f1_visualizer_")
+                temp_dir = tempfile.mkdtemp(prefix="cinematic_visualizer_")
             audio_path = download_audio_from_url(input_path_str, temp_dir)
             return Path(audio_path), True, temp_dir
     else:
@@ -242,6 +242,8 @@ def extract_audio_features(audio_path, sr=None):
     # Tempo (global BPM)
     print("Detecting tempo...")
     tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+    # Convert tempo to scalar if it's an array
+    tempo = float(tempo) if isinstance(tempo, (np.ndarray, list)) else float(tempo)
     print(f"Detected BPM: {tempo:.1f}")
     
     # Spectral Centroid (brightness / chaos)
@@ -439,7 +441,7 @@ def render_frame(features, frame_idx, width, height):
 
 def create_visualization(audio_input, output_path=None):
     """
-    Main function to create the F1 cinematic visualization.
+    Main function to create the cinematic visualization.
     
     Args:
         audio_input: Path to local audio file, YouTube URL, or direct audio URL
@@ -454,12 +456,12 @@ def create_visualization(audio_input, output_path=None):
         
         # Set output path
         if output_path is None:
-            output_path = audio_path.parent / f"{audio_path.stem}_f1_visualizer.mp4"
+            output_path = audio_path.parent / f"{audio_path.stem}_cinematic_visualizer.mp4"
         else:
             output_path = Path(output_path)
         
         print(f"\n{'='*60}")
-        print("F1 CINEMATIC AUDIO VISUALIZER 🏎️🔥")
+        print("CINEMATIC AUDIO VISUALIZER")
         print(f"{'='*60}\n")
         
         # Extract audio features
@@ -517,7 +519,8 @@ def create_visualization(audio_input, output_path=None):
         
         print(f"\n✅ Complete! Video saved to: {output_path}")
         print(f"   Duration: {features['duration']:.2f}s")
-        print(f"   BPM: {features['tempo']:.1f}")
+        tempo_value = float(features['tempo']) if isinstance(features['tempo'], (np.ndarray, list)) else float(features['tempo'])
+        print(f"   BPM: {tempo_value:.1f}")
         
         return str(output_path)
         
@@ -533,20 +536,20 @@ def create_visualization(audio_input, output_path=None):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="F1 Cinematic Audio Visualizer - Generate cinematic videos from audio",
+        description="Cinematic Audio Visualizer - Generate cinematic videos from audio",
         epilog="""
 Examples:
   # Local audio file
-  python f1_visualizer.py track.mp3
+  python cinematic_visualizer.py track.mp3
   
   # YouTube URL
-  python f1_visualizer.py "https://www.youtube.com/watch?v=VIDEO_ID"
+  python cinematic_visualizer.py "https://www.youtube.com/watch?v=VIDEO_ID"
   
   # Direct audio URL
-  python f1_visualizer.py "https://example.com/audio.mp3"
+  python cinematic_visualizer.py "https://example.com/audio.mp3"
   
   # Custom output path
-  python f1_visualizer.py track.wav -o output.mp4
+  python cinematic_visualizer.py track.wav -o output.mp4
         """,
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -559,7 +562,7 @@ Examples:
         "-o", "--output",
         type=str,
         default=None,
-        help="Path to output video file (default: <audio_name>_f1_visualizer.mp4)"
+        help="Path to output video file (default: <audio_name>_cinematic_visualizer.mp4)"
     )
     
     args = parser.parse_args()
