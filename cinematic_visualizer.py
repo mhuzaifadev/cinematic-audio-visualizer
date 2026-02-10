@@ -22,7 +22,6 @@ except ImportError:
     from moviepy.editor import ImageSequenceClip
 import os
 import re
-import tempfile
 import shutil
 from pathlib import Path
 from urllib.parse import urlparse
@@ -32,7 +31,16 @@ import requests
 
 # Constants
 WIDTH, HEIGHT = 1920, 1080
-FPS = 30
+FPS = 60
+
+
+def get_project_temp_dir():
+    """Get or create temp directory in project root."""
+    # Get the script's directory (project root)
+    script_dir = Path(__file__).parent.absolute()
+    temp_dir = script_dir / ".temp"
+    temp_dir.mkdir(exist_ok=True)
+    return str(temp_dir)
 
 
 def clamp(x, a=0, b=1):
@@ -67,7 +75,7 @@ def download_youtube_audio(url, output_dir=None):
         Path to downloaded audio file (temporary file)
     """
     if output_dir is None:
-        output_dir = tempfile.mkdtemp()
+        output_dir = get_project_temp_dir()
     else:
         os.makedirs(output_dir, exist_ok=True)
     
@@ -149,7 +157,7 @@ def download_audio_from_url(url, output_dir=None):
         Path to downloaded audio file (temporary file)
     """
     if output_dir is None:
-        output_dir = tempfile.mkdtemp()
+        output_dir = get_project_temp_dir()
     else:
         os.makedirs(output_dir, exist_ok=True)
     
@@ -201,13 +209,13 @@ def prepare_audio_input(input_path, temp_dir=None):
         if is_youtube_url(input_path_str):
             print("Detected YouTube URL")
             if temp_dir is None:
-                temp_dir = tempfile.mkdtemp(prefix="cinematic_visualizer_")
+                temp_dir = get_project_temp_dir()
             audio_path = download_youtube_audio(input_path_str, temp_dir)
             return Path(audio_path), True, temp_dir
         else:
             print("Detected direct audio URL")
             if temp_dir is None:
-                temp_dir = tempfile.mkdtemp(prefix="cinematic_visualizer_")
+                temp_dir = get_project_temp_dir()
             audio_path = download_audio_from_url(input_path_str, temp_dir)
             return Path(audio_path), True, temp_dir
     else:
@@ -223,7 +231,8 @@ def extract_audio_features(audio_path, sr=None):
     Extract all audio features needed for visualization.
     
     Returns:
-        dict with keys: y, sr, duration, rms, tempo, centroid, onset_env, bass_energy
+        dict with keys: y, sr, duration, rms, tempo, centroid, onset_env, bass_energy,
+        frequency_bands, spectral_rolloff, zero_crossing_rate, beats
     """
     print(f"Loading audio: {audio_path}")
     y, sr = librosa.load(audio_path, sr=sr)
@@ -241,29 +250,70 @@ def extract_audio_features(audio_path, sr=None):
     
     # Tempo (global BPM)
     print("Detecting tempo...")
-    tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+    tempo, beats = librosa.beat.beat_track(y=y, sr=sr, hop_length=hop_length)
     # Convert tempo to scalar if it's an array
-    tempo = float(tempo) if isinstance(tempo, (np.ndarray, list)) else float(tempo)
+    if isinstance(tempo, np.ndarray):
+        tempo = tempo.item() if tempo.size > 0 else float(tempo[0])
+    elif isinstance(tempo, list):
+        tempo = float(tempo[0]) if tempo else 0.0
+    else:
+        tempo = float(tempo)
     print(f"Detected BPM: {tempo:.1f}")
+    
+    # Convert beat frames to frame indices
+    beat_frames = librosa.frames_to_samples(beats, hop_length=hop_length)
+    beat_frame_indices = (beat_frames / (sr / FPS)).astype(int)
     
     # Spectral Centroid (brightness / chaos)
     print("Extracting spectral centroid...")
     centroid = librosa.feature.spectral_centroid(y=y, sr=sr, hop_length=hop_length)[0]
     centroid = librosa.util.normalize(centroid)
     
+    # Spectral Rolloff (high frequency content)
+    print("Extracting spectral rolloff...")
+    rolloff = librosa.feature.spectral_rolloff(y=y, sr=sr, hop_length=hop_length)[0]
+    rolloff = librosa.util.normalize(rolloff)
+    
+    # Zero Crossing Rate (noisiness/percussiveness)
+    print("Extracting zero crossing rate...")
+    zcr = librosa.feature.zero_crossing_rate(y, hop_length=hop_length)[0]
+    zcr = librosa.util.normalize(zcr)
+    
     # Onset Strength (drops / hits)
     print("Extracting onset strength...")
     onset_env = librosa.onset.onset_strength(y=y, sr=sr, hop_length=hop_length)
     onset_env = librosa.util.normalize(onset_env)
     
-    # Bass energy (low frequency content for shake)
-    print("Extracting bass energy...")
+    # Frequency bands for color mapping
+    print("Extracting frequency bands...")
     stft = librosa.stft(y, hop_length=hop_length)
-    # Focus on low frequencies (0-200 Hz)
-    bass_freqs = librosa.fft_frequencies(sr=sr, n_fft=stft.shape[0] * 2 - 1)
-    bass_mask = bass_freqs <= 200
-    bass_energy = np.abs(stft[bass_mask, :]).mean(axis=0)
-    bass_energy = librosa.util.normalize(bass_energy)
+    magnitude = np.abs(stft)
+    
+    # Define frequency bands
+    freqs = librosa.fft_frequencies(sr=sr, n_fft=stft.shape[0] * 2 - 1)
+    
+    # Low (0-200 Hz) - Red
+    low_mask = freqs <= 200
+    low_energy = np.abs(stft[low_mask, :]).mean(axis=0)
+    low_energy = librosa.util.normalize(low_energy)
+    
+    # Mid-Low (200-800 Hz) - Orange/Yellow
+    mid_low_mask = (freqs > 200) & (freqs <= 800)
+    mid_low_energy = np.abs(stft[mid_low_mask, :]).mean(axis=0) if np.any(mid_low_mask) else low_energy
+    mid_low_energy = librosa.util.normalize(mid_low_energy)
+    
+    # Mid (800-3000 Hz) - Green/Cyan
+    mid_mask = (freqs > 800) & (freqs <= 3000)
+    mid_energy = np.abs(stft[mid_mask, :]).mean(axis=0) if np.any(mid_mask) else low_energy
+    mid_energy = librosa.util.normalize(mid_energy)
+    
+    # High (3000+ Hz) - Blue/Purple
+    high_mask = freqs > 3000
+    high_energy = np.abs(stft[high_mask, :]).mean(axis=0) if np.any(high_mask) else low_energy
+    high_energy = librosa.util.normalize(high_energy)
+    
+    # Bass energy (for shake)
+    bass_energy = low_energy
     
     return {
         'y': y,
@@ -272,170 +322,247 @@ def extract_audio_features(audio_path, sr=None):
         'rms': rms,
         'tempo': tempo,
         'centroid': centroid,
+        'rolloff': rolloff,
+        'zcr': zcr,
         'onset_env': onset_env,
         'bass_energy': bass_energy,
+        'low_energy': low_energy,
+        'mid_low_energy': mid_low_energy,
+        'mid_energy': mid_energy,
+        'high_energy': high_energy,
+        'beat_frames': beat_frame_indices,
         'hop_length': hop_length
     }
 
 
-def map_features_to_visuals(features, frame_idx):
-    """
-    Map audio features to visual parameters for a given frame.
-    
-    Returns:
-        dict with visual parameters: speed, shake, zoom, flash, horizon_intensity
-    """
-    if frame_idx >= len(features['rms']):
-        frame_idx = len(features['rms']) - 1
-    
-    rms = features['rms'][frame_idx]
-    centroid = features['centroid'][frame_idx]
-    onset = features['onset_env'][frame_idx]
-    bass = features['bass_energy'][frame_idx]
-    
-    # Speed lines velocity (BPM → speed)
-    # Higher RMS = faster motion
-    speed = 5 + rms * 40
-    
-    # Screen shake (Bass → shake)
-    # Stronger bass = more shake
-    shake = int(bass * 25)
-    
-    # Zoom (Centroid → zoom, Orchestra swell → slow zoom)
-    # Higher centroid = more zoom, but also consider RMS for orchestral swells
-    zoom = 1.0 + (centroid * 0.1) + (rms * 0.05)
-    
-    # Flash on drops (Onset → flash)
-    flash = onset > 0.85
-    
-    # Horizon intensity (for cinematic feel)
-    # Lower during intense moments, higher during calm
-    horizon_intensity = 1.0 - (rms * 0.3)
-    
+# ============================================================
+# CINEMATIC PALETTES — locked per scene, changed only on drops
+# ============================================================
+
+SCENE_PALETTES = [
+    ((255, 60, 60),   (255, 120, 80)),   # red / warm orange
+    ((60, 180, 255),  (100, 220, 255)),   # cyan / ice blue
+    ((255, 180, 40),  (255, 220, 100)),   # amber / gold
+    ((160, 80, 255),  (200, 140, 255)),   # purple / lavender
+    ((40, 255, 180),  (100, 255, 220)),   # teal / mint
+    ((255, 60, 160),  (255, 120, 200)),   # magenta / pink
+]
+
+
+# ============================================================
+# PRE-COMPUTE: generate stable random seeds for depth lines
+# so every frame is deterministic without per-frame np.random
+# ============================================================
+
+NUM_DEPTH_LINES = 180
+_line_seeds = np.random.RandomState(42).randn(NUM_DEPTH_LINES, 2)  # (dx, dy) offsets
+
+
+# ============================================================
+# SCENE STATE — mutable state passed through frames
+# ============================================================
+
+def make_scene_state():
+    """Create the initial mutable scene state dict."""
     return {
-        'speed': speed,
-        'shake': shake,
-        'zoom': zoom,
-        'flash': flash,
-        'horizon_intensity': horizon_intensity
+        'palette_idx': 0,
+        'prev_zoom': 1.0,
+        'prev_shake_x': 0.0,
+        'prev_shake_y': 0.0,
+        'flash_decay': 0.0,        # 1.0 on drop, decays to 0
+        'frames_since_drop': 999,   # large initial value
     }
 
 
-def draw_speed_lines(frame, visuals, frame_idx, width, height):
-    """Draw speed lines that move based on BPM/RMS."""
-    speed = visuals['speed']
-    
-    # Draw multiple sets of speed lines
-    num_lines = 15
-    line_spacing = width // num_lines
-    
-    for i in range(num_lines):
-        x_base = (i * line_spacing) % width
-        
-        # Calculate position based on speed and frame
-        x1 = int((x_base + frame_idx * speed) % width)
-        x2 = int((x_base + frame_idx * speed * 0.5) % width)
-        
-        # Vary line lengths for depth
-        y1 = height
-        y2 = height - 300 - int(visuals['rms'] * 200) if 'rms' in visuals else height - 300
-        
-        # Draw line with slight transparency effect
-        color_intensity = int(200 + visuals.get('rms', 0.5) * 55)
-        cv2.line(frame, (x1, y1), (x2, y2), (color_intensity, color_intensity, color_intensity), 2)
-        
-        # Add secondary lines for motion blur effect
-        if i % 2 == 0:
-            x1_blur = int((x_base + frame_idx * speed * 0.8) % width)
-            x2_blur = int((x_base + frame_idx * speed * 0.4) % width)
-            cv2.line(frame, (x1_blur, y1), (x2_blur, y2), 
-                    (color_intensity // 2, color_intensity // 2, color_intensity // 2), 1)
+# ============================================================
+# CORE ILLUSION: depth-based speed lines (vanishing point)
+# ============================================================
+
+def draw_depth_lines(frame, speed, intensity, color, accent, frame_idx, width, height):
+    """
+    Radiating tunnel lines from a TRUE center vanishing point.
+    Lines point OUTWARD from center — creates forward velocity illusion.
+    """
+    cx, cy = width // 2, height // 2  # TRUE center vanishing point
+
+    max_len = int(400 + intensity * 600)
+
+    for i in range(NUM_DEPTH_LINES):
+        # Angle around the vanishing point (full 360 degrees)
+        angle = (_line_seeds[i, 0] * 2 - 1) * np.pi
+
+        # z cycles forward — gives the "rushing through tunnel" feel
+        z = (i * 25 + frame_idx * speed * 6) % 2000
+        depth = max(0.05, 1.0 - z / 2000)  # 1 = near camera, 0 = far
+
+        # Direction vector from center outward
+        dx = np.cos(angle)
+        dy = np.sin(angle)
+
+        # Start near vanishing point, end far from it
+        start_x = int(cx + dx * 50 * depth)
+        start_y = int(cy + dy * 50 * depth)
+        end_x = int(cx + dx * max_len * depth)
+        end_y = int(cy + dy * max_len * depth)
+
+        # Near lines are thicker, brighter
+        thickness = max(1, int(5 * depth))
+        brightness = depth * (0.4 + intensity * 0.6)
+
+        # Mix primary and accent color
+        c = color if i % 4 else accent
+        line_color = (
+            int(c[0] * brightness),
+            int(c[1] * brightness),
+            int(c[2] * brightness),
+        )
+
+        cv2.line(frame, (start_x, start_y), (end_x, end_y), line_color, thickness)
 
 
-def draw_horizon(frame, visuals, width, height):
-    """Draw horizon gradient for cinematic depth."""
-    intensity = visuals['horizon_intensity']
-    
-    # Create gradient from horizon line upward
-    horizon_y = int(height * 0.7)
-    
-    for y in range(horizon_y, height):
-        # Gradient from dark at horizon to lighter at bottom
-        gradient_factor = (y - horizon_y) / (height - horizon_y)
-        color_value = int(20 + gradient_factor * 30 * intensity)
-        
-        cv2.line(frame, (0, y), (width, y), 
-                (color_value, color_value, color_value), 1)
+# ============================================================
+# SECONDARY: subtle dust / ember particles (background layer)
+# ============================================================
+
+NUM_EMBERS = 60
+_ember_seeds = np.random.RandomState(99).rand(NUM_EMBERS, 3)  # x_frac, y_frac, phase
+
+def draw_embers(frame, intensity, color, frame_idx, width, height):
+    """Tiny floating embers that drift upward — adds life without competing."""
+    for i in range(NUM_EMBERS):
+        sx, sy, phase = _ember_seeds[i]
+        x = int(sx * width)
+        y = int((sy * height - frame_idx * (0.3 + intensity * 0.5) + phase * 500) % height)
+        size = 1 if intensity < 0.5 else 2
+        alpha = 0.15 + intensity * 0.25
+        ember_color = (
+            int(color[0] * alpha),
+            int(color[1] * alpha),
+            int(color[2] * alpha),
+        )
+        cv2.circle(frame, (x, y), size, ember_color, -1)
 
 
-def apply_screen_shake(frame, shake_amount, width, height):
-    """Apply screen shake effect."""
-    if shake_amount == 0:
+# ============================================================
+# VIGNETTE — darkens edges, focuses the eye
+# ============================================================
+
+_vignette_cache = {}
+
+def get_vignette(width, height, strength=0.7):
+    """Create (and cache) a vignette mask."""
+    key = (width, height, int(strength * 100))
+    if key not in _vignette_cache:
+        X = np.linspace(-1, 1, width)
+        Y = np.linspace(-1, 1, height)
+        xx, yy = np.meshgrid(X, Y)
+        dist = np.sqrt(xx ** 2 + yy ** 2)
+        vignette = 1.0 - np.clip(dist * strength, 0, 1)
+        # Expand to 3 channels
+        _vignette_cache[key] = np.stack([vignette] * 3, axis=-1).astype(np.float32)
+    return _vignette_cache[key]
+
+
+# ============================================================
+# POST-FX: smooth zoom, smooth shake, white flash
+# ============================================================
+
+def apply_smooth_zoom(frame, zoom_factor, width, height):
+    """Apply zoom via center crop + resize."""
+    if abs(zoom_factor - 1.0) < 0.005:
         return frame
-    
-    dx = np.random.randint(-shake_amount, shake_amount + 1)
-    dy = np.random.randint(-shake_amount, shake_amount + 1)
-    
+    new_w = max(1, int(width / zoom_factor))
+    new_h = max(1, int(height / zoom_factor))
+    x_off = (width - new_w) // 2
+    y_off = (height - new_h) // 2
+    cropped = frame[y_off:y_off + new_h, x_off:x_off + new_w]
+    return cv2.resize(cropped, (width, height), interpolation=cv2.INTER_LINEAR)
+
+
+def apply_smooth_shake(frame, dx, dy, width, height):
+    """Apply sub-pixel camera shake."""
+    if abs(dx) < 0.5 and abs(dy) < 0.5:
+        return frame
     M = np.float32([[1, 0, dx], [0, 1, dy]])
-    frame_shaken = cv2.warpAffine(frame, M, (width, height), 
-                                  borderMode=cv2.BORDER_REPLICATE)
-    return frame_shaken
+    return cv2.warpAffine(frame, M, (width, height), borderMode=cv2.BORDER_REPLICATE)
 
 
-def apply_zoom(frame, zoom_factor, width, height):
-    """Apply zoom effect (centered)."""
-    if zoom_factor == 1.0:
-        return frame
-    
-    # Calculate new dimensions
-    new_width = int(width / zoom_factor)
-    new_height = int(height / zoom_factor)
-    
-    # Center crop
-    x_offset = (width - new_width) // 2
-    y_offset = (height - new_height) // 2
-    
-    # Resize and place
-    frame_zoomed = cv2.resize(frame[y_offset:y_offset+new_height, 
-                                    x_offset:x_offset+new_width], 
-                             (width, height))
-    return frame_zoomed
+# ============================================================
+# RENDER ONE FRAME — the single, clean pipeline
+# ============================================================
 
+def render_frame(features, frame_idx, width, height, state):
+    """
+    Render a single cinematic frame.
 
-def apply_flash(frame, flash_active):
-    """Apply white flash effect on drops."""
-    if flash_active:
-        # Blend white flash (80% white, 20% original)
-        flash_frame = frame.copy()
-        flash_frame[:] = (255, 255, 255)
-        frame = cv2.addWeighted(frame, 0.2, flash_frame, 0.8, 0)
-    return frame
+    Philosophy: ONE dominant illusion (depth speed lines) + camera breathing.
+    Scene cuts ONLY on rare major drops. Palette is locked per scene.
+    """
+    fi = min(frame_idx, len(features['rms']) - 1)
 
+    # --- read audio features for this frame ---
+    rms       = features['rms'][fi]
+    onset     = features['onset_env'][fi]
+    bass      = features['bass_energy'][fi]
+    centroid  = features['centroid'][fi]
+    low       = features['low_energy'][fi]
+    high      = features['high_energy'][fi]
 
-def render_frame(features, frame_idx, width, height):
-    """Render a single frame with all visual effects."""
-    # Start with black frame
+    # --- detect major drop (rare!) ---
+    is_major_drop = onset > 0.9 and rms > 0.7 and state['frames_since_drop'] > 20
+    state['frames_since_drop'] += 1
+
+    if is_major_drop:
+        state['frames_since_drop'] = 0
+        state['palette_idx'] = (state['palette_idx'] + 1) % len(SCENE_PALETTES)
+        state['flash_decay'] = 1.0
+
+    # --- current palette ---
+    color, accent = SCENE_PALETTES[state['palette_idx']]
+
+    # --- smoothed speed (RMS drives it) ---
+    speed = 3 + rms * 45
+
+    # --- layer 0: tinted background (NOT black — warm, with headroom) ---
+    bg_boost = 0.12 + rms * 0.18  # brighter when loud, never pitch black
     frame = np.zeros((height, width, 3), dtype=np.uint8)
-    
-    # Get visual parameters for this frame
-    visuals = map_features_to_visuals(features, frame_idx)
-    visuals['rms'] = features['rms'][min(frame_idx, len(features['rms']) - 1)]
-    
-    # Draw horizon first (background)
-    draw_horizon(frame, visuals, width, height)
-    
-    # Draw speed lines
-    draw_speed_lines(frame, visuals, frame_idx, width, height)
-    
-    # Apply zoom (before shake for better effect)
-    frame = apply_zoom(frame, visuals['zoom'], width, height)
-    
-    # Apply flash on drops
-    frame = apply_flash(frame, visuals['flash'])
-    
-    # Apply screen shake (last, so it affects everything)
-    frame = apply_screen_shake(frame, visuals['shake'], width, height)
-    
+    frame[:] = (
+        int(color[0] * bg_boost * 0.15),
+        int(color[1] * bg_boost * 0.12),
+        int(color[2] * bg_boost * 0.18),
+    )
+
+    # --- layer 1: floating embers (background, subtle) ---
+    draw_embers(frame, rms, accent, frame_idx, width, height)
+
+    # --- layer 2: THE MAIN EVENT — depth speed lines ---
+    draw_depth_lines(frame, speed, rms, color, accent, frame_idx, width, height)
+
+    # --- post-fx 1: smooth zoom (CAMERA — applied first) ---
+    zoom_target = clamp(1.0 + centroid * 0.05 + rms * 0.03, 1.0, 1.12)
+    state['prev_zoom'] = state['prev_zoom'] * 0.92 + zoom_target * 0.08
+    frame = apply_smooth_zoom(frame, state['prev_zoom'], width, height)
+
+    # --- post-fx 2: smooth shake (CAMERA — bass-driven, low-pass filtered) ---
+    shake_mag = bass * 18
+    raw_dx = np.random.uniform(-shake_mag, shake_mag)
+    raw_dy = np.random.uniform(-shake_mag, shake_mag)
+    state['prev_shake_x'] = state['prev_shake_x'] * 0.7 + raw_dx * 0.3
+    state['prev_shake_y'] = state['prev_shake_y'] * 0.7 + raw_dy * 0.3
+    frame = apply_smooth_shake(frame, state['prev_shake_x'], state['prev_shake_y'], width, height)
+
+    # --- post-fx 3: vignette (LENS — after camera movement) ---
+    vignette_strength = 0.55 + (1.0 - rms) * 0.25  # lighter vignette overall
+    vignette = get_vignette(width, height, vignette_strength)
+    frame = (frame.astype(np.float32) * vignette).astype(np.uint8)
+
+    # --- post-fx 4: white flash on drop (EXPOSURE — last, sits on top) ---
+    if state['flash_decay'] > 0.05:
+        flash_alpha = state['flash_decay'] * 0.85
+        white = np.full_like(frame, 255)
+        frame = cv2.addWeighted(frame, 1 - flash_alpha, white, flash_alpha, 0)
+        state['flash_decay'] *= 0.55  # exponential decay
+
     return frame
 
 
@@ -454,11 +581,17 @@ def create_visualization(audio_input, output_path=None):
         # Prepare audio input (handles URLs and local files)
         audio_path, is_temp, temp_dir = prepare_audio_input(audio_input)
         
-        # Set output path
+        # Set output path - always in project root, not temp directory
         if output_path is None:
-            output_path = audio_path.parent / f"{audio_path.stem}_cinematic_visualizer.mp4"
+            # Use project root, not temp directory
+            project_root = Path(__file__).parent.absolute()
+            output_path = project_root / f"{audio_path.stem}_cinematic_visualizer.mp4"
         else:
             output_path = Path(output_path)
+            # Ensure output is absolute path
+            if not output_path.is_absolute():
+                project_root = Path(__file__).parent.absolute()
+                output_path = project_root / output_path
         
         print(f"\n{'='*60}")
         print("CINEMATIC AUDIO VISUALIZER")
@@ -472,14 +605,16 @@ def create_visualization(audio_input, output_path=None):
         print(f"\nRendering {total_frames} frames at {FPS} FPS...")
         print(f"Resolution: {WIDTH}×{HEIGHT}\n")
         
-        # Render all frames
+        # Render all frames with cinematic state tracking
         frames = []
+        state = make_scene_state()
+        
         for i in range(total_frames):
             if (i + 1) % 30 == 0:
                 progress = ((i + 1) / total_frames) * 100
                 print(f"Progress: {progress:.1f}% ({i+1}/{total_frames} frames)", end='\r')
             
-            frame = render_frame(features, i, WIDTH, HEIGHT)
+            frame = render_frame(features, i, WIDTH, HEIGHT, state)
             frames.append(frame)
         
         print(f"\nProgress: 100.0% ({total_frames}/{total_frames} frames)")
@@ -519,17 +654,31 @@ def create_visualization(audio_input, output_path=None):
         
         print(f"\n✅ Complete! Video saved to: {output_path}")
         print(f"   Duration: {features['duration']:.2f}s")
-        tempo_value = float(features['tempo']) if isinstance(features['tempo'], (np.ndarray, list)) else float(features['tempo'])
+        tempo_value = features['tempo']
+        if isinstance(tempo_value, np.ndarray):
+            tempo_value = tempo_value.item() if tempo_value.size > 0 else float(tempo_value[0])
+        elif isinstance(tempo_value, list):
+            tempo_value = float(tempo_value[0]) if tempo_value else 0.0
+        else:
+            tempo_value = float(tempo_value)
         print(f"   BPM: {tempo_value:.1f}")
         
         return str(output_path)
         
     finally:
-        # Clean up temporary files if we downloaded from URL
+        # Clean up temporary audio files only (not the final video)
+        # Only delete files in temp_dir, not the directory itself if output is there
         if is_temp and temp_dir and os.path.exists(temp_dir):
             try:
-                shutil.rmtree(temp_dir)
-                print(f"Cleaned up temporary files")
+                # List all files in temp directory
+                temp_files = [f for f in os.listdir(temp_dir) if os.path.isfile(os.path.join(temp_dir, f))]
+                # Delete only audio files, not video files
+                for file in temp_files:
+                    file_path = os.path.join(temp_dir, file)
+                    # Only delete audio files, keep video files
+                    if file_path.endswith(('.wav', '.mp3', '.m4a', '.webm', '.opus', '.ogg')):
+                        os.remove(file_path)
+                print(f"Cleaned up temporary audio files")
             except Exception as e:
                 print(f"Warning: Could not clean up temporary files: {e}")
 
